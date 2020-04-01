@@ -33,3 +33,4 @@ Go to `app/server.c` and uncomment the server implementation. Commit and
 push your changes, and you'll now see the first stage pass.
 
 Time to move on to the next stage!
+
