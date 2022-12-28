@@ -53,10 +53,13 @@ int main() {
 	
 	int conn = accept(server_fd, (struct sockaddr *) &client_addr, &client_addr_len);
 	printf("Client connected\n");
-	
-	while(read(server_fd, NULL, 1)) {
-		const char* PONG = "+PONG\r\n";
-		write(conn, PONG, 7);		
+
+	unsigned char* ping = "PING\r\n";
+	unsigned char* PONG = "+PONG\r\n";
+	unsigned char buf[1024];
+	while (1) {
+		read(conn, buf, 1024);
+		write(conn, PONG, strlen(PONG));
 	}
 
 	close(server_fd);
