@@ -7,13 +7,7 @@
 #include <errno.h>
 #include <unistd.h>
 
-int main() {
-	// Disable output buffering
-	setbuf(stdout, NULL);
-
-	// You can use print statements as follows for debugging, they'll be visible when running tests.
-	printf("Logs from your program will appear here!\n");
-	
+void bind_and_listen(int* server_fd, struct sockaddr *client_addr, int* client_addr_len) {
 	int server_fd, client_addr_len;
 	struct sockaddr_in client_addr;
 	
@@ -46,23 +40,37 @@ int main() {
 		printf("Listen failed: %s \n", strerror(errno));
 		return 1;
 	}
-	
+
 	printf("Waiting for a client to connect...\n");
 	client_addr_len = sizeof(client_addr);
 
+	return server_fd;
+}
+
+int main() {
+	// Disable output buffering
+	setbuf(stdout, NULL);
 	
-	int conn = accept(server_fd, (struct sockaddr *) &client_addr, &client_addr_len);
-	printf("Client connected\n");
+	int server_socket, client_addr_len;
+	struct sockaddr_in client_addr;
 
-	unsigned char* ping = "PING\r\n";
-	unsigned char* PONG = "+PONG\r\n";
-	unsigned char buf[1024];
-	while (1) {
-		read(conn, buf, 1024);
-		write(conn, PONG, strlen(PONG));
-	}
+	bind_and_listen(&server_socket, &client_addr, &client_addr_len);
 
-	close(server_fd);
+	while(1) {
+		int client_socket = accept(server_socket, (struct sockaddr *) &client_addr, &client_addr_len);
+
+		printf("Client connected\n");
+
+		unsigned char* ping = "PING\r\n";
+		unsigned char* PONG = "+PONG\r\n";
+		unsigned char buf[1024] = {0};
+
+		read(client_socket, buf, 1024);
+		write(client_socket, PONG, strlen(PONG));
+
+	}	
+
+	close(server_socket);
 
 	return 0;
 }
