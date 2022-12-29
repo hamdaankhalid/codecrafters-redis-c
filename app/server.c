@@ -10,7 +10,7 @@
 
 #define PORT 6379
 
-int bind_and_listen(struct sockaddr *client_addr, int *client_addr_len, int port)
+int bind_and_listen(int port)
 {
 	int server_fd = socket(AF_INET, SOCK_STREAM, 0);
 	if (server_fd == -1)
@@ -39,14 +39,13 @@ int bind_and_listen(struct sockaddr *client_addr, int *client_addr_len, int port
 		return -1;
 	}
 
-	int connection_backlog = 0;
+	int connection_backlog = 30;
 	if (listen(server_fd, connection_backlog) != 0)
 	{
 		printf("Listen failed: %s \n", strerror(errno));
 		return -1;
 	}
 
-	client_addr_len = (int *)sizeof(client_addr);
 	return server_fd;
 }
 
@@ -67,7 +66,7 @@ void handle_connection(int conn, fd_set *__restrict current_sockets)
 }
 
 // IO Multiplexing (One thread listens to multiple sockets!)
-void run_multiplex(int server_socket, struct sockaddr_in *client_addr, int client_addr_len)
+void run_multiplex(int server_socket)
 {
 	// Initialize current file descriptor set and add server socket into our fdset
 	fd_set current_sockets, ready_sockets;
@@ -75,11 +74,10 @@ void run_multiplex(int server_socket, struct sockaddr_in *client_addr, int clien
 	FD_SET(server_socket, &current_sockets);
 
 	// make a copy of server socket, this is because for some weird reason server_socket gets changed
-	int sv = server_socket;
 
 	while (1)
 	{
-		printf("Waiting for a client to connect or socket to be read from!...\n");
+		// printf("Waiting for a client to connect or socket to be read from!...\n");
 		// make a copy because select is destructive
 		ready_sockets = current_sockets;
 
@@ -106,10 +104,9 @@ void run_multiplex(int server_socket, struct sockaddr_in *client_addr, int clien
 				continue;
 			}
 
-			if (i == sv)
+			if (i == server_socket)
 			{
-				int cpsv = sv;
-				int new_client_socket = accept(cpsv, (struct sockaddr *)&client_addr, (socklen_t *)&client_addr_len);
+				int new_client_socket = accept(server_socket, NULL, NULL);
 				if (new_client_socket < 0)
 				{
 					perror("Error accepting new client connection");
@@ -131,16 +128,13 @@ int main()
 	// Disable output buffering
 	setbuf(stdout, NULL);
 
-	int server_socket, client_addr_len;
-	struct sockaddr_in client_addr;
-
-	server_socket = bind_and_listen((struct sockaddr *)&client_addr, &client_addr_len, PORT);
+	int server_socket = bind_and_listen(PORT);
 	if (server_socket < 0)
 	{
 		return 1;
 	}
 
-	run_multiplex(server_socket, &client_addr, client_addr_len);
+	run_multiplex(server_socket);
 
 	close(server_socket);
 
