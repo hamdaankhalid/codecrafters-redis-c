@@ -76,7 +76,7 @@ void run_multiplex(const int server_socket, struct sockaddr_in* client_addr, int
 				continue;
 			}
 
-			// WHY ARE CONNECTIONS MADE AFTER FIRST ONE NOT EQUAL TO SERVER_SOCKET
+			// TODO: WHY ARE CONNECTIONS MADE AFTER FIRST ONE NOT EQUAL TO SERVER_SOCKET
 			if (i == server_socket) {
 				printf("New Client Connected\n");
 				int new_client_socket = accept(server_socket, (struct sockaddr *) &client_addr, (socklen_t *) &client_addr_len);
