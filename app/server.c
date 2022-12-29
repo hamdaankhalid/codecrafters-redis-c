@@ -54,9 +54,9 @@ void handle_connection(int conn, fd_set *__restrict current_sockets)
 {
 	unsigned char *ping = "PING\r\n";
 	unsigned char *PONG = "+PONG\r\n";
-	unsigned char buf[6] = {0};
+	unsigned char buf[1024] = {0};
 
-	if (recv(conn, buf, 6, 0) > 0)
+	if (recv(conn, buf, 1024, 0) > 0)
 	{
 		write(conn, PONG, strlen(PONG));
 	}
