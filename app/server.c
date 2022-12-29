@@ -16,6 +16,7 @@ int bind_and_listen(struct sockaddr *client_addr, int* client_addr_len, int port
 		printf("Socket creation failed: %s...\n", strerror(errno));
 		return -1;
 	}
+	
 	// Since the tester restarts your program quite often, setting REUSE_PORT
 	// ensures that we don't run into 'Address already in use' errors
 	int reuse = 1;
@@ -23,6 +24,7 @@ int bind_and_listen(struct sockaddr *client_addr, int* client_addr_len, int port
 		printf("SO_REUSEPORT failed: %s \n", strerror(errno));
 		return -1;
 	}
+	
 	struct sockaddr_in serv_addr = { .sin_family = AF_INET ,
 									 .sin_port = htons(port),
 									 .sin_addr = { htonl(INADDR_ANY) },
@@ -31,24 +33,32 @@ int bind_and_listen(struct sockaddr *client_addr, int* client_addr_len, int port
 		printf("Bind failed: %s \n", strerror(errno));
 		return -1;
 	}
+	
 	int connection_backlog = 0;
 	if (listen(server_fd, connection_backlog) != 0) {
 		printf("Listen failed: %s \n", strerror(errno));
 		return -1;
 	}
+	
 	client_addr_len = (int *) sizeof(client_addr);
 	return server_fd;
 }
 
 
-void handle_connection(int conn) {
+void handle_connection(int conn, fd_set * __restrict current_sockets) {
 	unsigned char* ping = "PING\r\n";
 	unsigned char* PONG = "+PONG\r\n";
 	unsigned char buf[1024] = { 0 };
-	while (recv(conn, buf, 1024, 0) > 0) {
+
+	if (recv(conn, buf, 1024, 0) > 0) {
 		write(conn, PONG, strlen(PONG));
+		return;
 	}
+
+	close(conn);
+	FD_CLR(conn, current_sockets);
 }
+
 
 // IO Multiplexing (One thread listens to multiple sockets!)
 void run_multiplex(const int server_socket, struct sockaddr_in* client_addr, int client_addr_len) {
@@ -58,15 +68,25 @@ void run_multiplex(const int server_socket, struct sockaddr_in* client_addr, int
 	// Add server socket into our fdset
 	FD_SET(server_socket, &current_sockets);
 
+	// make a copy
+	int sv = server_socket;
+	
 	while (1) {
-
-		printf("Waiting for a client to connect or socket to be read from!...\n");
+		// printf("Server Socket Open at FD [%d]\n", sv);
+		// printf("Waiting for a client to connect or socket to be read from!...\n");
 		// make a copy because select is destructive
 		ready_sockets = current_sockets;
 		// select() returns the number of ready descriptors that are contained in the descriptor sets, or -1 if an error occurred.
-		if (select(FD_SETSIZE, &ready_sockets, NULL, NULL, NULL) < 0) {
+		
+		int numready = select(FD_SETSIZE, &ready_sockets, NULL, NULL, NULL);
+		
+		if (numready < 0) {
 			perror("Select error");
 			exit(1);
+		}
+
+		if (numready == 0) {
+			continue;
 		}
 
 		// Iterate over entire fdset, if the socket is ready.
@@ -76,25 +96,22 @@ void run_multiplex(const int server_socket, struct sockaddr_in* client_addr, int
 				continue;
 			}
 
-			// TODO: WHY ARE CONNECTIONS MADE AFTER FIRST ONE NOT EQUAL TO SERVER_SOCKET
-			if (i == server_socket) {
-				printf("New Client Connected\n");
-				int new_client_socket = accept(server_socket, (struct sockaddr *) &client_addr, (socklen_t *) &client_addr_len);
+			if (i == sv) {
+				int cpsv = sv;
+				int new_client_socket = accept(cpsv, (struct sockaddr *) &client_addr, (socklen_t *) &client_addr_len);
 				if (new_client_socket < 0) {
 					perror("Error accepting new client connection");
 					continue;
 				}
-				printf("Client socket on connection: %d \n", new_client_socket);
+
 				FD_SET(new_client_socket, &current_sockets);
 			} else {
-				printf("A previously queued socket is ready: %d\n", i);
-				handle_connection(i);
-				FD_CLR(i, &current_sockets);
-				printf("Connection Handled\n");
+				handle_connection(i, &current_sockets);
 			}
 		}
 	}
 }
+
 
 int main() {
 	// Disable output buffering
