@@ -48,14 +48,14 @@ int bind_and_listen(struct sockaddr *client_addr, int* client_addr_len, int port
 void handle_connection(int conn, fd_set * __restrict current_sockets) {
 	unsigned char* ping = "PING\r\n";
 	unsigned char* PONG = "+PONG\r\n";
-	unsigned char buf[1024] = { 0 };
+	unsigned char buf[6] = { 0 };
 
-	if (recv(conn, buf, 1024, 0) > 0) {
+	if (recv(conn, buf, 6, 0) > 0) {
 		write(conn, PONG, strlen(PONG));
 		return;
 	}
 
-	close(conn);
+	// close(conn);
 	FD_CLR(conn, current_sockets);
 }
 
