@@ -53,7 +53,6 @@ void handle_connection(int conn, fd_set * __restrict current_sockets) {
 	if (recv(conn, buf, 6, 0) > 0) {
 		write(conn, PONG, strlen(PONG));
 	} else {
-		// close(conn);
 		FD_CLR(conn, current_sockets);
 	}
 }
