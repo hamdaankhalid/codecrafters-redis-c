@@ -38,6 +38,10 @@ void move_buffer_till_next(char** buf) {
 	*buf += i;
 }
 
+/*
+ "*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n"
+ Example array to parse
+*/
 void handle_cmd_array(int conn, char* buf) {
 	// move past the *
 	buf++;
@@ -50,13 +54,14 @@ void handle_cmd_array(int conn, char* buf) {
 	// TODO: CORRECT TILL ABOVE THIS :)
 	int elems_read = 0;
 	while (elems_read < num_elements) {
+			// move past the $
 			buf++;
 			int str_size = get_num(buf);
 			printf("%d\n", str_size);
 
 			// move buffer till we reach start of where instruction is
 			move_buffer_till_next(&buf);
-			char instruction[str_size];
+			char instruction[str_size+2]; // + 2 for /r/n to be copied
 			memcpy(instruction, buf, str_size+2);
 			move_buffer_till_next(&buf);
 			
@@ -64,6 +69,8 @@ void handle_cmd_array(int conn, char* buf) {
 
 			if (instruction == "ECHO\r\n") {
 				// then the next cmd will be the cmd to echo back!
+				print("An echo command has been recieved!");
+				// move past the $
 				buf++;
 				int next_str_size = get_num(buf);
 				move_buffer_till_next(&buf);
@@ -83,9 +90,7 @@ void handle_cmd_array(int conn, char* buf) {
 
 
 void route(int conn, char* buf, int bufsize) {
-	
 	char firstchar = buf[0];
-
 	switch (firstchar)
 	{
 	case SIMPLE_STR:
@@ -106,8 +111,8 @@ void handle_connection(int conn, fd_set *__restrict current_sockets)
 	if (recv(conn, buf, 1024, 0) > 0)
 	{
 		// if we can recieve data, then we should parse it and route it to the right handler
-		// route(conn, &buf, 1024);
-		write(conn, pong, strlen(pong));
+		route(conn, &buf, 1024);
+		// write(conn, pong, strlen(pong));
 		return;
 	}
 
