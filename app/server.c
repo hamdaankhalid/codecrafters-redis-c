@@ -68,7 +68,7 @@ void handle_cmd_array(int conn, char* buf) {
 			
 			printf("%s\n", instruction);
 
-			if (instruction == "ECHO\r\n" || instruction == "echo\r\n") {
+			if (strcmp(instruction, "ECHO\r\n") || strcmp(instruction, "echo\r\n")) {
 				// then the next cmd will be the cmd to echo back!
 				printf("An echo command has been recieved!");
 				// move past the $
@@ -80,7 +80,7 @@ void handle_cmd_array(int conn, char* buf) {
 				write(conn, echo_str, strlen(echo_str));
 				move_buffer_till_next(&buf);
 				elems_read +=2;
-			} else if (instruction == "PING\r\n" || instruction == "ping\r\n") {
+			} else if (strcmp(instruction, "PING\r\n") || strcmp(instruction, "ping\r\n")) {
 				printf("A ping command has been recieved!");
 				write(conn, pong, strlen(pong));
 				elems_read += 1;
