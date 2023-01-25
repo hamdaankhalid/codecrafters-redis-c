@@ -75,7 +75,7 @@ void handle_cmd_array(int conn, char* buf) {
 				buf++;
 				int next_str_size = get_num(buf);
 				move_buffer_till_next(&buf);
-				char echo_str[next_str_size];
+				char echo_str[next_str_size+2];
 				memcpy(echo_str, buf, next_str_size+2);
 				write(conn, echo_str, strlen(echo_str));
 				move_buffer_till_next(&buf);
