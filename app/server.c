@@ -13,9 +13,66 @@
 #define ARRAYS '*'
 #define ERROR '-'
 
+// Hashmap macros
+#define MAPSIZE 500
+#define BASE (256)
+#define MAX_STRING_SIZE (128)
+#define MAX_BITS (BITS_PER_CHAR * MAX_STRING_SIZE)
+
 const char* error_message = "-Error message\r\n";
 const char* pong = "+PONG\r\n";
 const char* ok_response = "+OK";
+
+// Hashmap used to store key val
+struct keyval
+{
+	const char* key;
+	const char* value;
+};
+
+struct keyval* hashmap[MAPSIZE] = { NULL };
+
+int hashkey(const char *s)
+{
+        unsigned long h;
+        unsigned const char *us;
+   
+       /* cast s to unsigned const char * */
+       /* this ensures that elements of s will be treated as having values >= 0 */
+       us = (unsigned const char *) s;
+   
+       h = 0;
+       while(*us != '\0') {
+           h = (h * BASE + *us) % 100000;
+           us++;
+       } 
+   
+       return h % MAPSIZE;
+}
+
+int set_key_val(const char* key, const char* val) {
+	// hash offset from key
+	int hashedkey = hashkey(key);
+	if (hashmap[hashedkey] != 0) {
+		return 1;
+	}
+	struct keyval* kv = (struct keyval*)malloc(sizeof(struct keyval));
+	kv->key = key;
+	kv->value = val;
+	hashmap[hashedkey] = kv;
+	return 0;
+}
+
+const char* get_value(const char* key) {
+	int hashedkey = hashkey(key);
+	if (hashmap[hashedkey] == 0) {
+		return NULL;
+	}
+	return hashmap[hashedkey]->key;
+}
+
+// -------------------------
+
 
 int get_num(char* first){
 	int len = 0;
@@ -46,11 +103,8 @@ void handle_cmd_array(int conn, char* buf) {
 	int num_elements = get_num(buf);
 	printf("NUM ELEMENTS: %d \n", num_elements);
 	// move to where the instruction starts
-	printf("BUFFER AT START: %s \n", buf);
 	move_buffer_till_next(&buf);
-
 	printf("BUFFER AFTER MOVE: %s \n", buf);
-	// TODO: CORRECT TILL ABOVE THIS :)
 	int elems_read = 0;
 	while (elems_read < num_elements) {
 			// move past the $
@@ -77,14 +131,13 @@ void handle_cmd_array(int conn, char* buf) {
 				char echo_str[next_str_size+3]; // 1 spot for + and the 2 spots for \r\n
 				echo_str[0] = '+';
 				memcpy(echo_str+1, buf, next_str_size+2);
-				
 				printf("Writing back %s \n", echo_str);
-
 				write(conn, echo_str, next_str_size+3);
 				move_buffer_till_next(&buf);
 				elems_read +=2;
 			} else if (strcmp(instruction, "SET\r\n") == 0 || strcmp(instruction, "set\r\n")) {
 				printf("A set command has been recieved! \n");
+				// TODO: HK CHECK AND TEST
 				// move past the $
 				buf++;
 				int next_key_size = get_num(buf);
@@ -92,7 +145,6 @@ void handle_cmd_array(int conn, char* buf) {
 				move_buffer_till_next(&buf);
 				char key[next_key_size+2]; // 2 spots for \r\n
 				memcpy(key, buf, next_key_size+2);
-
 				move_buffer_till_next(&buf);
 				// move past the $
 				buf++;
@@ -101,9 +153,8 @@ void handle_cmd_array(int conn, char* buf) {
 				move_buffer_till_next(&buf);
 				char val[next_val_size+2]; // 2 spots for \r\n
 				memcpy(val, buf, next_val_size+2);
-				// TODO STORE KEY VAL RESPONSE
-				
-				write(conn, ok_response, strlen(ok_response));
+				const char* msg = set_key_val(key, val) == 0 ? ok_response : error_message;
+				write(conn, msg, strlen(msg));
 			} else if (strcmp(instruction, "PING\r\n") == 0 || strcmp(instruction, "ping\r\n") == 0) {
 				printf("A ping command has been recieved!");
 				write(conn, pong, strlen(pong));
