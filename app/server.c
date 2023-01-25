@@ -43,7 +43,7 @@ int hashkey(const char *s)
 	while(*us != '\0') {
 			h = (h * BASE + *us) % 100000;
 			us++;
-	} 
+	}
 	return (int) h % MAPSIZE;
 }
 
