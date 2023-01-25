@@ -15,6 +15,7 @@
 
 const char* error_message = "-Error message\r\n";
 const char* pong = "+PONG\r\n";
+const char* ok_response = "+OK";
 
 int get_num(char* first){
 	int len = 0;
@@ -38,10 +39,7 @@ void move_buffer_till_next(char** buf) {
 	*buf += i+1;
 }
 
-/*
- "*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n"
- Example array to parse
-*/
+
 void handle_cmd_array(int conn, char* buf) {
 	// move past the *
 	buf++;
@@ -85,6 +83,27 @@ void handle_cmd_array(int conn, char* buf) {
 				write(conn, echo_str, next_str_size+3);
 				move_buffer_till_next(&buf);
 				elems_read +=2;
+			} else if (strcmp(instruction, "SET\r\n") == 0 || strcmp(instruction, "set\r\n")) {
+				printf("A set command has been recieved! \n");
+				// move past the $
+				buf++;
+				int next_key_size = get_num(buf);
+				printf("The associated set key is of size %d \n", next_key_size);
+				move_buffer_till_next(&buf);
+				char key[next_key_size+2]; // 2 spots for \r\n
+				memcpy(key, buf, next_key_size+2);
+
+				move_buffer_till_next(&buf);
+				// move past the $
+				buf++;
+				int next_val_size = get_num(buf);
+				printf("The associated set val is of size %d \n", next_val_size);
+				move_buffer_till_next(&buf);
+				char val[next_val_size+2]; // 2 spots for \r\n
+				memcpy(val, buf, next_val_size+2);
+				// TODO STORE KEY VAL RESPONSE
+				
+				write(conn, ok_response, strlen(ok_response));
 			} else if (strcmp(instruction, "PING\r\n") == 0 || strcmp(instruction, "ping\r\n") == 0) {
 				printf("A ping command has been recieved!");
 				write(conn, pong, strlen(pong));
