@@ -34,8 +34,8 @@ void move_buffer_till_next(char** buf) {
 	while ((*buf)[i] != '\n') {
 		i++;
 	}
-	printf("buffer moved by count: %d\n", i);
-	*buf += i;
+	// printf("buffer moved by count: %d\n", i+1);
+	*buf += i+1;
 }
 
 /*
@@ -50,7 +50,7 @@ void handle_cmd_array(int conn, char* buf) {
 	// move to where the instruction starts
 	printf("BUFFER AT START: %s \n", buf);
 	move_buffer_till_next(&buf);
-	buf++;
+
 	printf("BUFFER AFTER MOVE: %s \n", buf);
 	// TODO: CORRECT TILL ABOVE THIS :)
 	int elems_read = 0;
