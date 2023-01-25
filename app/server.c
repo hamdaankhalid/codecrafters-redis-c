@@ -9,60 +9,110 @@
 #include <sys/select.h>
 
 #define PORT 6379
+#define SIMPLE_STR '+'
+#define ARRAYS '*'
+#define ERROR '-'
 
-int bind_and_listen(int port)
-{
-	int server_fd = socket(AF_INET, SOCK_STREAM, 0);
-	if (server_fd == -1)
-	{
-		printf("Socket creation failed: %s...\n", strerror(errno));
-		return -1;
+const char* error_message = "-Error message\r\n";
+const char* pong = "+PONG\r\n";
+
+int get_num(char* first){
+	int len = 0;
+	while (first[len] != '\r') {
+		len++;
 	}
+	
+	char res[len];
+	memcpy(res, first, len+2);
 
-	// Since the tester restarts your program quite often, setting REUSE_PORT
-	// ensures that we don't run into 'Address already in use' errors
-	int reuse = 1;
-	if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse)) < 0)
-	{
-		printf("SO_REUSEPORT failed: %s \n", strerror(errno));
-		return -1;
+	return atoi(res);
+}
+
+// move buffer till the end of an item in buffer which is represented as '\n'
+void move_buffer_till_next(char** buf) {
+	int i = 0;
+	while ((*buf)[i] != '\n') {
+		i++;
 	}
+	printf("buffer moved by count: %d\n", i);
+	*buf += i;
+}
 
-	struct sockaddr_in serv_addr = {
-			.sin_family = AF_INET,
-			.sin_port = htons(port),
-			.sin_addr = {htonl(INADDR_ANY)},
-	};
-	if (bind(server_fd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) != 0)
-	{
-		printf("Bind failed: %s \n", strerror(errno));
-		return -1;
+void handle_cmd_array(int conn, char* buf) {
+	// move past the *
+	buf++;
+	int num_elements = get_num(buf);
+	printf("NUM ELEMENTS: %d \n", num_elements);
+	// move to where the instruction starts
+	printf("BUFFER AT START: %s \n", buf);
+
+	move_buffer_till_next(&buf);
+
+	printf("BUFFER AFTER MOVE: %s \n", buf);
+	// TODO: CORRECT TILL ABOVE THIS :)
+	int elems_read = 0;
+	while (elems_read < num_elements) {
+			buf++;
+			int str_size = get_num(buf);
+			printf("%d\n", str_size);
+
+			// move buffer till we reach start of where instruction is
+			move_buffer_till_next(&buf);
+			char instruction[str_size];
+			memcpy(instruction, buf, str_size+2);
+			move_buffer_till_next(&buf);
+			
+			printf("%s\n", instruction);
+
+			if (instruction == "ECHO\r\n") {
+				// then the next cmd will be the cmd to echo back!
+				buf++;
+				int next_str_size = get_num(buf);
+				move_buffer_till_next(&buf);
+				char echo_str[next_str_size];
+				memcpy(echo_str, buf, next_str_size+2);
+				write(conn, echo_str, strlen(echo_str));
+				move_buffer_till_next(&buf);
+				elems_read +=2;
+			} else if (instruction == "PING\r\n") {
+				write(conn, pong, strlen(pong));
+				elems_read += 1;
+			} else {
+				elems_read += 1;
+			}
 	}
+}
 
-	int connection_backlog = 30;
-	if (listen(server_fd, connection_backlog) != 0)
+
+void route(int conn, char* buf, int bufsize) {
+	
+	char firstchar = buf[0];
+
+	switch (firstchar)
 	{
-		printf("Listen failed: %s \n", strerror(errno));
-		return -1;
+	case SIMPLE_STR:
+		write(conn, pong, strlen(pong));
+		break;
+	case ARRAYS:
+		handle_cmd_array(conn, buf);
+		break;
+	default:
+		write(conn, error_message, strlen(error_message));
+		break;
 	}
-
-	return server_fd;
 }
 
 void handle_connection(int conn, fd_set *__restrict current_sockets)
 {
-	unsigned char *ping = "PING\r\n";
-	unsigned char *PONG = "+PONG\r\n";
-	unsigned char buf[1024] = {0};
-
+	char buf[1024] = {0};
 	if (recv(conn, buf, 1024, 0) > 0)
 	{
-		write(conn, PONG, strlen(PONG));
+		// if we can recieve data, then we should parse it and route it to the right handler
+		route(conn, &buf, 1024);
+		return;
 	}
-	else
-	{
-		FD_CLR(conn, current_sockets);
-	}
+
+	FD_CLR(conn, current_sockets);
 }
 
 // IO Multiplexing (One thread listens to multiple sockets!)
@@ -121,6 +171,45 @@ void run_multiplex(int server_socket)
 			}
 		}
 	}
+}
+
+int bind_and_listen(int port)
+{
+	int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (server_fd == -1)
+	{
+		printf("Socket creation failed: %s...\n", strerror(errno));
+		return -1;
+	}
+
+	// Since the tester restarts your program quite often, setting REUSE_PORT
+	// ensures that we don't run into 'Address already in use' errors
+	int reuse = 1;
+	if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse)) < 0)
+	{
+		printf("SO_REUSEPORT failed: %s \n", strerror(errno));
+		return -1;
+	}
+
+	struct sockaddr_in serv_addr = {
+			.sin_family = AF_INET,
+			.sin_port = htons(port),
+			.sin_addr = {htonl(INADDR_ANY)},
+	};
+	if (bind(server_fd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) != 0)
+	{
+		printf("Bind failed: %s \n", strerror(errno));
+		return -1;
+	}
+
+	int connection_backlog = 30;
+	if (listen(server_fd, connection_backlog) != 0)
+	{
+		printf("Listen failed: %s \n", strerror(errno));
+		return -1;
+	}
+
+	return server_fd;
 }
 
 int main()
