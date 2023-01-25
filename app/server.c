@@ -70,13 +70,17 @@ void handle_cmd_array(int conn, char* buf) {
 
 			if (strcmp(instruction, "ECHO\r\n") == 0 || strcmp(instruction, "echo\r\n") == 0) {
 				// then the next cmd will be the cmd to echo back!
-				printf("An echo command has been recieved!");
+				printf("An echo command has been recieved! \n");
 				// move past the $
 				buf++;
 				int next_str_size = get_num(buf);
+				printf("The associated string size is of size %d \n", next_str_size);
 				move_buffer_till_next(&buf);
 				char echo_str[next_str_size+2];
 				memcpy(echo_str, buf, next_str_size+2);
+				
+				printf("Writing back %s \n", echo_str);
+
 				write(conn, echo_str, strlen(echo_str));
 				move_buffer_till_next(&buf);
 				elems_read +=2;
