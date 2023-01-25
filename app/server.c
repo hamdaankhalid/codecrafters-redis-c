@@ -70,7 +70,6 @@ const char* get_value(const char* key) {
 	return hashmap[hashedkey]->value;
 }
 
-// -------------------------
 
 // ------------------------- Server utils ----------------------
 int get_num(char* first){
@@ -95,7 +94,7 @@ void move_buffer_till_next(char** buf) {
 	*buf += i+1;
 }
 
-// -------------------------------------------------------------------
+// -----------Command Handlers---------------------
 
 void handle_echo(int conn, char* buf) {
 	// move past the $
@@ -154,6 +153,8 @@ void handle_get(int conn, char* buf) {
 	printf("Formatted write back %s", formatted_write);
 	write(conn, write_back_value, formatted_len);
 }
+
+//-----------------Routing commands-----------------
 
 // Redis clients send arrays so this is where we handle them from
 void handle_cmd_array(int conn, char* buf) {
@@ -221,6 +222,7 @@ void route(int conn, char* buf, int bufsize) {
 	}
 }
 
+//---------- Event loop and Event loop helpers----------------
 void handle_connection(int conn, fd_set *__restrict current_sockets)
 {
 	char buf[1024] = {0};
