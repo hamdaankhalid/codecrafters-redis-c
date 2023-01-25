@@ -76,12 +76,13 @@ void handle_cmd_array(int conn, char* buf) {
 				int next_str_size = get_num(buf);
 				printf("The associated string size is of size %d \n", next_str_size);
 				move_buffer_till_next(&buf);
-				char echo_str[next_str_size+2];
-				memcpy(echo_str, buf, next_str_size+2);
+				char echo_str[next_str_size+3]; // 1 spot for + and the 2 spots for \r\n
+				echo_str[0] = '+';
+				memcpy(echo_str+1, buf, next_str_size+2);
 				
 				printf("Writing back %s \n", echo_str);
 
-				write(conn, echo_str, strlen(echo_str));
+				write(conn, echo_str, next_str_size+3);
 				move_buffer_till_next(&buf);
 				elems_read +=2;
 			} else if (strcmp(instruction, "PING\r\n") == 0 || strcmp(instruction, "ping\r\n") == 0) {
