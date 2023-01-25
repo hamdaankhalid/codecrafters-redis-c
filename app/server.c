@@ -19,11 +19,13 @@
 #define MAX_STRING_SIZE (128)
 #define MAX_BITS (BITS_PER_CHAR * MAX_STRING_SIZE)
 
+// const response messages
 const char* error_message = "-Error message\r\n";
 const char* pong = "+PONG\r\n";
-const char* ok_response = "+OK";
+const char* ok_response = "+OK\r\n";
+const char* key_not_found_response = "+(nil)\r\n";
 
-// Hashmap used to store key val
+// ------------ Hashmap used to store key val ----------------
 struct keyval
 {
 	const char* key;
@@ -34,25 +36,21 @@ struct keyval* hashmap[MAPSIZE] = { NULL };
 
 int hashkey(const char *s)
 {
-        unsigned long h;
-        unsigned const char *us;
-   
-       /* cast s to unsigned const char * */
-       /* this ensures that elements of s will be treated as having values >= 0 */
-       us = (unsigned const char *) s;
-   
-       h = 0;
-       while(*us != '\0') {
-           h = (h * BASE + *us) % 100000;
-           us++;
-       } 
-   
-       return h % MAPSIZE;
+	unsigned long h;
+	unsigned const char *us;
+	us = (unsigned const char *) s;
+	h = 0;
+	while(*us != '\0') {
+			h = (h * BASE + *us) % 100000;
+			us++;
+	} 
+	return (int) h % MAPSIZE;
 }
 
 int set_key_val(const char* key, const char* val) {
 	// hash offset from key
 	int hashedkey = hashkey(key);
+	printf("hashkey being inserted at internal array at idx: %d \n", hashedkey);
 	if (hashmap[hashedkey] != 0) {
 		return 1;
 	}
@@ -65,15 +63,16 @@ int set_key_val(const char* key, const char* val) {
 
 const char* get_value(const char* key) {
 	int hashedkey = hashkey(key);
+	printf("hashkey being retrieved from internal array at idx: %d \n", hashedkey);
 	if (hashmap[hashedkey] == 0) {
 		return NULL;
 	}
-	return hashmap[hashedkey]->key;
+	return hashmap[hashedkey]->value;
 }
 
 // -------------------------
 
-
+// ------------------------- Server utils ----------------------
 int get_num(char* first){
 	int len = 0;
 	while (first[len] != '\r') {
@@ -96,7 +95,67 @@ void move_buffer_till_next(char** buf) {
 	*buf += i+1;
 }
 
+// -------------------------------------------------------------------
 
+void handle_echo(int conn, char* buf) {
+	// move past the $
+	buf++;
+	int next_str_size = get_num(buf);
+	printf("The associated string size is of size %d", next_str_size);
+	move_buffer_till_next(&buf);
+	char echo_str[next_str_size+3]; // 1 spot for + and the 2 spots for \r\n
+	echo_str[0] = '+';
+	memcpy(echo_str+1, buf, next_str_size+2);
+	printf("Writing back %s", echo_str);
+	write(conn, echo_str, next_str_size+3);
+	move_buffer_till_next(&buf);
+}
+
+void handle_set(int conn, char* buf) {
+		// move past the $
+		buf++;
+		int next_key_size = get_num(buf);
+		printf("The associated set key is of size %d \n", next_key_size);
+		move_buffer_till_next(&buf);
+		char key[next_key_size+2]; // 2 spots for \r\n
+		memcpy(key, buf, next_key_size+2);
+		move_buffer_till_next(&buf);
+		// move past the $
+		buf++;
+		int next_val_size = get_num(buf);
+		printf("The associated set val is of size %d \n", next_val_size);
+		move_buffer_till_next(&buf);
+		char val[next_val_size+2]; // 2 spots for \r\n
+		memcpy(val, buf, next_val_size+2);
+		const char* msg = set_key_val(key, val) == 0 ? ok_response : error_message;
+		write(conn, msg, strlen(msg));
+}
+
+void handle_get(int conn, char* buf) {
+	// move past the $
+	buf++;
+	int key_size = get_num(buf);
+	printf("The associated get key is of size %d \n", key_size);
+	move_buffer_till_next(&buf);
+	char key[key_size+2]; // 2 spots for \r\n
+	memcpy(key, buf, key_size+2);
+	move_buffer_till_next(&buf);
+	char* write_back_value = get_value(key);
+	if (write_back_value == NULL) {
+		printf("key not found in store \n");
+		write(conn, error_message, strlen(error_message));
+		return;
+	}
+	printf("Write back %s", write_back_value);
+	int formatted_len = strlen(write_back_value)+1;
+	char* formatted_write[formatted_len]; // +1 to insert the + sign
+	formatted_write[0] = '+';
+	memcpy(formatted_write+1, write_back_value, strlen(write_back_value));
+	printf("Formatted write back %s", formatted_write);
+	write(conn, write_back_value, formatted_len);
+}
+
+// Redis clients send arrays so this is where we handle them from
 void handle_cmd_array(int conn, char* buf) {
 	// move past the *
 	buf++;
@@ -104,67 +163,47 @@ void handle_cmd_array(int conn, char* buf) {
 	printf("NUM ELEMENTS: %d \n", num_elements);
 	// move to where the instruction starts
 	move_buffer_till_next(&buf);
-	printf("BUFFER AFTER MOVE: %s \n", buf);
+	printf("BUFFER AFTER MOVE: %s", buf);
 	int elems_read = 0;
+
 	while (elems_read < num_elements) {
+			// parse the instruction
 			// move past the $
 			buf++;
 			int str_size = get_num(buf);
 			printf("%d\n", str_size);
-
 			// move buffer till we reach start of where instruction is
 			move_buffer_till_next(&buf);
-			char instruction[str_size+2]; // + 2 for /r/n to be copied
-			memcpy(instruction, buf, str_size+2);
+			char instruction[str_size]; // + 2 for /r/n to be copied
+			memcpy(instruction, buf, str_size);
 			move_buffer_till_next(&buf);
-			
-			printf("%s\n", instruction);
+			printf("INSTRUCTION: %s \n", instruction);
 
-			if (strcmp(instruction, "ECHO\r\n") == 0 || strcmp(instruction, "echo\r\n") == 0) {
+			if (str_size == 4 && strncasecmp(instruction, "ECHO", 4) == 0) {
 				// then the next cmd will be the cmd to echo back!
 				printf("An echo command has been recieved! \n");
-				// move past the $
-				buf++;
-				int next_str_size = get_num(buf);
-				printf("The associated string size is of size %d \n", next_str_size);
-				move_buffer_till_next(&buf);
-				char echo_str[next_str_size+3]; // 1 spot for + and the 2 spots for \r\n
-				echo_str[0] = '+';
-				memcpy(echo_str+1, buf, next_str_size+2);
-				printf("Writing back %s \n", echo_str);
-				write(conn, echo_str, next_str_size+3);
-				move_buffer_till_next(&buf);
-				elems_read +=2;
-			} else if (strcmp(instruction, "SET\r\n") == 0 || strcmp(instruction, "set\r\n")) {
+				handle_echo(conn, buf);
+				elems_read+=2;
+			} else if (str_size == 3 && strncasecmp(instruction, "SET", 3) == 0) {
 				printf("A set command has been recieved! \n");
-				// TODO: HK CHECK AND TEST
-				// move past the $
-				buf++;
-				int next_key_size = get_num(buf);
-				printf("The associated set key is of size %d \n", next_key_size);
-				move_buffer_till_next(&buf);
-				char key[next_key_size+2]; // 2 spots for \r\n
-				memcpy(key, buf, next_key_size+2);
-				move_buffer_till_next(&buf);
-				// move past the $
-				buf++;
-				int next_val_size = get_num(buf);
-				printf("The associated set val is of size %d \n", next_val_size);
-				move_buffer_till_next(&buf);
-				char val[next_val_size+2]; // 2 spots for \r\n
-				memcpy(val, buf, next_val_size+2);
-				const char* msg = set_key_val(key, val) == 0 ? ok_response : error_message;
-				write(conn, msg, strlen(msg));
-			} else if (strcmp(instruction, "PING\r\n") == 0 || strcmp(instruction, "ping\r\n") == 0) {
+				handle_set(conn, buf);
+				elems_read += 3;
+			} else if (str_size == 3 && strncasecmp(instruction, "GET", 3) == 0) {
+				printf("A get command has been recieved! \n");
+				handle_get(conn, buf);
+				elems_read += 2;
+			} else if (str_size == 4 && strncasecmp(instruction, "PING", 4) == 0) {
 				printf("A ping command has been recieved!");
 				write(conn, pong, strlen(pong));
 				elems_read += 1;
 			} else {
-				elems_read += 1;
+				printf("instruction not recognized %s", instruction);
+				write(conn, error_message, strlen(error_message));
+				// skip over rest of the elements
+				elems_read += num_elements;
 			}
 	}
 }
-
 
 void route(int conn, char* buf, int bufsize) {
 	char firstchar = buf[0];
@@ -189,7 +228,6 @@ void handle_connection(int conn, fd_set *__restrict current_sockets)
 	{
 		// if we can recieve data, then we should parse it and route it to the right handler
 		route(conn, &buf, 1024);
-		// write(conn, pong, strlen(pong));
 		return;
 	}
 
@@ -204,11 +242,8 @@ void run_multiplex(int server_socket)
 	FD_ZERO(&current_sockets);
 	FD_SET(server_socket, &current_sockets);
 
-	// make a copy of server socket, this is because for some weird reason server_socket gets changed
-
 	while (1)
 	{
-		// printf("Waiting for a client to connect or socket to be read from!...\n");
 		// make a copy because select is destructive
 		ready_sockets = current_sockets;
 
@@ -243,7 +278,7 @@ void run_multiplex(int server_socket)
 					perror("Error accepting new client connection");
 					continue;
 				}
-				printf("New connection accepted. \n");
+				// printf("New connection accepted. \n");
 				FD_SET(new_client_socket, &current_sockets);
 			}
 			else
