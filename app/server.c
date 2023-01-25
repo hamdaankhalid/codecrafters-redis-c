@@ -81,6 +81,7 @@ void handle_cmd_array(int conn, char* buf) {
 				move_buffer_till_next(&buf);
 				elems_read +=2;
 			} else if (instruction == "PING\r\n" || instruction == "ping\r\n") {
+				printf("A ping command has been recieved!");
 				write(conn, pong, strlen(pong));
 				elems_read += 1;
 			} else {
