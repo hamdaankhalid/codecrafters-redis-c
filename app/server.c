@@ -69,7 +69,7 @@ void handle_cmd_array(int conn, char* buf) {
 
 			if (instruction == "ECHO\r\n") {
 				// then the next cmd will be the cmd to echo back!
-				print("An echo command has been recieved!");
+				printf("An echo command has been recieved!");
 				// move past the $
 				buf++;
 				int next_str_size = get_num(buf);
