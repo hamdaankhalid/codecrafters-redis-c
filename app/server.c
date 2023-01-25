@@ -45,9 +45,7 @@ void handle_cmd_array(int conn, char* buf) {
 	printf("NUM ELEMENTS: %d \n", num_elements);
 	// move to where the instruction starts
 	printf("BUFFER AT START: %s \n", buf);
-
 	move_buffer_till_next(&buf);
-
 	printf("BUFFER AFTER MOVE: %s \n", buf);
 	// TODO: CORRECT TILL ABOVE THIS :)
 	int elems_read = 0;
@@ -108,7 +106,8 @@ void handle_connection(int conn, fd_set *__restrict current_sockets)
 	if (recv(conn, buf, 1024, 0) > 0)
 	{
 		// if we can recieve data, then we should parse it and route it to the right handler
-		route(conn, &buf, 1024);
+		// route(conn, &buf, 1024);
+		write(conn, pong, strlen(pong));
 		return;
 	}
 
