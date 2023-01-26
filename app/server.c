@@ -28,23 +28,19 @@ const char* key_not_found_response = "+(nil)\r\n";
 // ------------ Hashmap used to store key val ----------------
 struct keyval
 {
-	const char* key;
-	const char* value;
+	char* key;
+	char* value;
 };
 
 struct keyval* hashmap[MAPSIZE] = { NULL };
 
-int hashkey(const char *s)
-{
-	unsigned long h;
-	unsigned const char *us;
-	us = (unsigned const char *) s;
-	h = 0;
-	while(*us != '\0') {
-			h = (h * BASE + *us) % 100000;
-			us++;
+int hashkey (const char* word){
+	unsigned int hash = 0;
+	for (int i = 0 ; word[i] != '\0' ; i++)
+	{
+			hash = 31*hash + word[i];
 	}
-	return (int) h % MAPSIZE;
+	return hash % MAPSIZE;
 }
 
 int set_key_val(const char* key, const char* val) {
@@ -55,13 +51,15 @@ int set_key_val(const char* key, const char* val) {
 		return 1;
 	}
 	struct keyval* kv = (struct keyval*)malloc(sizeof(struct keyval));
-	kv->key = key;
-	kv->value = val;
+	kv->key = (char *)malloc(strlen(key));
+	kv->value = (char *)malloc(strlen(val));
+	memcpy(kv->key, key, strlen(key));
+	memcpy(kv->value, val, strlen(val));
 	hashmap[hashedkey] = kv;
 	return 0;
 }
 
-const char* get_value(const char* key) {
+char* get_value(const char* key) {
 	int hashedkey = hashkey(key);
 	printf("hashkey being retrieved from internal array at idx: %d \n", hashedkey);
 	if (hashmap[hashedkey] == 0) {
@@ -72,12 +70,17 @@ const char* get_value(const char* key) {
 
 
 // ------------------------- Server utils ----------------------
-int get_num(char* first){
-	int len = 0;
-	while (first[len] != '\r') {
-		len++;
+
+int size_of_data(char* data, char target) {
+	int i = 0;
+	while(data[i] != target) {
+		i++;
 	}
-	
+	return i+1;
+}
+
+int get_num(char* first){
+	int len = size_of_data(first, '\r');
 	char res[len];
 	memcpy(res, first, len+2);
 
@@ -100,7 +103,7 @@ void handle_echo(int conn, char* buf) {
 	// move past the $
 	buf++;
 	int next_str_size = get_num(buf);
-	printf("The associated string size is of size %d", next_str_size);
+	printf("The associated string size is of size %d \n", next_str_size);
 	move_buffer_till_next(&buf);
 	char echo_str[next_str_size+3]; // 1 spot for + and the 2 spots for \r\n
 	echo_str[0] = '+';
@@ -126,7 +129,8 @@ void handle_set(int conn, char* buf) {
 		move_buffer_till_next(&buf);
 		char val[next_val_size+2]; // 2 spots for \r\n
 		memcpy(val, buf, next_val_size+2);
-		const char* msg = set_key_val(key, val) == 0 ? ok_response : error_message;
+		printf("Saving %s, %s \n", key, val);
+		char* msg = set_key_val(key, val)  == 0 ? ok_response : error_message;
 		write(conn, msg, strlen(msg));
 }
 
@@ -145,13 +149,13 @@ void handle_get(int conn, char* buf) {
 		write(conn, error_message, strlen(error_message));
 		return;
 	}
-	printf("Write back %s", write_back_value);
-	int formatted_len = strlen(write_back_value)+1;
-	char* formatted_write[formatted_len]; // +1 to insert the + sign
+	int formatted_len = size_of_data(write_back_value, '\n') + 1;
+	printf("Write back %s with formatted size of %d bytes \n", write_back_value, formatted_len);
+	char formatted_write[formatted_len]; // +1 to insert the + sign
 	formatted_write[0] = '+';
-	memcpy(formatted_write+1, write_back_value, strlen(write_back_value));
+	memcpy(formatted_write+1, write_back_value, formatted_len - 1);
 	printf("Formatted write back %s", formatted_write);
-	write(conn, write_back_value, formatted_len);
+	write(conn, formatted_write, formatted_len);
 }
 
 //-----------------Routing commands-----------------
@@ -175,7 +179,7 @@ void handle_cmd_array(int conn, char* buf) {
 			printf("%d\n", str_size);
 			// move buffer till we reach start of where instruction is
 			move_buffer_till_next(&buf);
-			char instruction[str_size]; // + 2 for /r/n to be copied
+			char instruction[str_size];
 			memcpy(instruction, buf, str_size);
 			move_buffer_till_next(&buf);
 			printf("INSTRUCTION: %s \n", instruction);
@@ -198,7 +202,7 @@ void handle_cmd_array(int conn, char* buf) {
 				write(conn, pong, strlen(pong));
 				elems_read += 1;
 			} else {
-				printf("instruction not recognized %s", instruction);
+				printf("instruction not recognized %s \n", instruction);
 				write(conn, error_message, strlen(error_message));
 				// skip over rest of the elements
 				elems_read += num_elements;
@@ -237,15 +241,13 @@ void handle_connection(int conn, fd_set *__restrict current_sockets)
 }
 
 // IO Multiplexing (One thread listens to multiple sockets!)
-void run_multiplex(int server_socket)
-{
+void run_multiplex(int server_socket) {
 	// Initialize current file descriptor set and add server socket into our fdset
 	fd_set current_sockets, ready_sockets;
 	FD_ZERO(&current_sockets);
 	FD_SET(server_socket, &current_sockets);
 
-	while (1)
-	{
+	while (1) {
 		// make a copy because select is destructive
 		ready_sockets = current_sockets;
 
@@ -291,8 +293,7 @@ void run_multiplex(int server_socket)
 	}
 }
 
-int bind_and_listen(int port)
-{
+int bind_and_listen(int port) {
 	int server_fd = socket(AF_INET, SOCK_STREAM, 0);
 	if (server_fd == -1)
 	{
