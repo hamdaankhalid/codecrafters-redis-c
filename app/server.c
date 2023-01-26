@@ -12,29 +12,31 @@
 #define SIMPLE_STR '+'
 #define ARRAYS '*'
 #define ERROR '-'
+#define MAX_BUFFER_SIZE 1024
 
 // Hashmap macros
 #define MAPSIZE 500
-#define BASE (256)
-#define MAX_STRING_SIZE (128)
-#define MAX_BITS (BITS_PER_CHAR * MAX_STRING_SIZE)
+#define NOEXPIRATION -1
 
-// const response messages
-const char* error_message = "-Error message\r\n";
-const char* pong = "+PONG\r\n";
-const char* ok_response = "+OK\r\n";
-const char* key_not_found_response = "+(nil)\r\n";
+// response messages
+char* error_message = "-Error message\r\n";
+char* pong = "+PONG\r\n";
+char* ok_response = "+OK\r\n";
+char* key_not_found_response = "+(nil)\r\n";
+char* null_bulk_string = "$-1\r\n";
 
 // ------------ Hashmap used to store key val ----------------
 struct keyval
 {
 	char* key;
 	char* value;
+	char* created_at;
+	int ms_to_expire;
 };
 
 struct keyval* hashmap[MAPSIZE] = { NULL };
 
-int hashkey (const char* word){
+int hashkey (char* word){
 	unsigned int hash = 0;
 	for (int i = 0 ; word[i] != '\0' ; i++)
 	{
@@ -43,7 +45,7 @@ int hashkey (const char* word){
 	return hash % MAPSIZE;
 }
 
-int set_key_val(const char* key, const char* val) {
+int set_key_val(char* key, char* val, int expiration) {
 	// hash offset from key
 	int hashedkey = hashkey(key);
 	printf("hashkey being inserted at internal array at idx: %d \n", hashedkey);
@@ -51,15 +53,21 @@ int set_key_val(const char* key, const char* val) {
 		return 1;
 	}
 	struct keyval* kv = (struct keyval*)malloc(sizeof(struct keyval));
+	kv->ms_to_expire = expiration;
+	
+	char* rightnow = '10/23/2342:342'; // TODO: REAL TIME NOW
+	kv->created_at = (char *)malloc(strlen(right_now));
 	kv->key = (char *)malloc(strlen(key));
 	kv->value = (char *)malloc(strlen(val));
+	
+	memcpy(kv->created_at, rightnow, strlen(rightnow));
 	memcpy(kv->key, key, strlen(key));
 	memcpy(kv->value, val, strlen(val));
 	hashmap[hashedkey] = kv;
 	return 0;
 }
 
-char* get_value(const char* key) {
+struct keyval* get_value(char* key) {
 	int hashedkey = hashkey(key);
 	printf("hashkey being retrieved from internal array at idx: %d \n", hashedkey);
 	if (hashmap[hashedkey] == 0) {
@@ -93,13 +101,12 @@ void move_buffer_till_next(char** buf) {
 	while ((*buf)[i] != '\n') {
 		i++;
 	}
-	// printf("buffer moved by count: %d\n", i+1);
 	*buf += i+1;
 }
 
 // -----------Command Handlers---------------------
 
-void handle_echo(int conn, char* buf) {
+void handle_echo(int conn, char buf[MAX_BUFFER_SIZE]) {
 	// move past the $
 	buf++;
 	int next_str_size = get_num(buf);
@@ -113,7 +120,7 @@ void handle_echo(int conn, char* buf) {
 	move_buffer_till_next(&buf);
 }
 
-void handle_set(int conn, char* buf) {
+void handle_set(int conn, char buf[MAX_BUFFER_SIZE]) {
 		// move past the $
 		buf++;
 		int next_key_size = get_num(buf);
@@ -130,11 +137,18 @@ void handle_set(int conn, char* buf) {
 		char val[next_val_size+2]; // 2 spots for \r\n
 		memcpy(val, buf, next_val_size+2);
 		printf("Saving %s, %s \n", key, val);
-		char* msg = set_key_val(key, val)  == 0 ? ok_response : error_message;
+		// TODO DECIDE IF EXPIRATION EXISTS IN BUFFER IF IT DOES THEN SET EXPIRATION AS VAL ELSE NOEXPIRATION AS VAL
+		
+		int expiration = NOEXPIRATION;
+		char* msg = set_key_val(key, val, expiration)  == 0 ? ok_response : error_message;
 		write(conn, msg, strlen(msg));
 }
 
-void handle_get(int conn, char* buf) {
+bool is_expired(char* created_at, int ms_ttl) {
+	return false;
+}
+
+void handle_get(int conn, char buf[MAX_BUFFER_SIZE]) {
 	// move past the $
 	buf++;
 	int key_size = get_num(buf);
@@ -143,12 +157,17 @@ void handle_get(int conn, char* buf) {
 	char key[key_size+2]; // 2 spots for \r\n
 	memcpy(key, buf, key_size+2);
 	move_buffer_till_next(&buf);
-	char* write_back_value = get_value(key);
-	if (write_back_value == NULL) {
+	struct keyval* stored_data = get_value(key);
+	char* write_back_value = stored_data->value;
+	int expiration = stored_data->ms_to_expire;
+	char* created_at = stored_data->created_at;
+
+	if (write_back_value == NULL || is_expired(created_at, expiration)) {
 		printf("key not found in store \n");
-		write(conn, error_message, strlen(error_message));
+		write(conn, null_bulk_string, strlen(null_bulk_string));
 		return;
 	}
+
 	int formatted_len = size_of_data(write_back_value, '\n') + 1;
 	printf("Write back %s with formatted size of %d bytes \n", write_back_value, formatted_len);
 	char formatted_write[formatted_len]; // +1 to insert the + sign
@@ -161,7 +180,7 @@ void handle_get(int conn, char* buf) {
 //-----------------Routing commands-----------------
 
 // Redis clients send arrays so this is where we handle them from
-void handle_cmd_array(int conn, char* buf) {
+void handle_cmd_array(int conn, char buf[MAX_BUFFER_SIZE]) {
 	// move past the *
 	buf++;
 	int num_elements = get_num(buf);
@@ -210,7 +229,7 @@ void handle_cmd_array(int conn, char* buf) {
 	}
 }
 
-void route(int conn, char* buf, int bufsize) {
+void route(int conn, char buf[MAX_BUFFER_SIZE], int bufsize) {
 	char firstchar = buf[0];
 	switch (firstchar)
 	{
@@ -233,7 +252,7 @@ void handle_connection(int conn, fd_set *__restrict current_sockets)
 	if (recv(conn, buf, 1024, 0) > 0)
 	{
 		// if we can recieve data, then we should parse it and route it to the right handler
-		route(conn, &buf, 1024);
+		route(conn, buf, 1024);
 		return;
 	}
 
@@ -341,6 +360,8 @@ int main()
 	{
 		return 1;
 	}
+	
+	printf("Redis Server listening on port %d \n", PORT);
 
 	run_multiplex(server_socket);
 
