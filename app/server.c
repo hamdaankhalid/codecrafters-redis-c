@@ -35,16 +35,17 @@ struct keyvalentry
 	char* key;
 	char* value;
 	time_t created_at; // duplicate this data so even get can use it :)
+	int ms_to_expire; // duplicated as well
 };
 
 struct hashmap {
-	pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+	pthread_mutex_t mutex;
 	struct keyvalentry** data;
 };
 
 int hashkey (char* word){
 	unsigned int hash = 0;
-	for (int i = 0 ; word[i] != '\0' ; i++)
+	for (int i = 0 ; word[i] != '\n' ; i++)
 	{
 			hash = 31*hash + word[i];
 	}
@@ -55,13 +56,16 @@ int set_key_val(struct hashmap* map, char* key, char* val, int expiration) {
 	// hash offset from key
 	int hashedkey = hashkey(key);
 	pthread_mutex_lock(&map->mutex);
-	printf("hashkey being inserted at internal array at idx: %d \n", hashedkey);
-	if (map->data[hashedkey] != 0) {
+	printf("hashkey being inserted at internal array for %s at idx: %d \n", key, hashedkey);
+	if (map->data[hashedkey] != NULL) {
+		pthread_mutex_unlock(&map->mutex);
 		return 1;
 	}
 	struct keyvalentry* kv = (struct keyvalentry*)malloc(sizeof(struct keyvalentry));
 	kv->key = (char *)malloc(strlen(key));
 	kv->value = (char *)malloc(strlen(val));
+	kv->created_at = time(NULL);
+	kv->ms_to_expire = expiration;
 	
 	memcpy(kv->key, key, strlen(key));
 	memcpy(kv->value, val, strlen(val));
@@ -73,8 +77,9 @@ int set_key_val(struct hashmap* map, char* key, char* val, int expiration) {
 struct keyvalentry* get_value(struct hashmap* map, char* key) {
 	int hashedkey = hashkey(key);
 	pthread_mutex_lock(&map->mutex);
-	printf("hashkey being retrieved from internal array at idx: %d \n", hashedkey);
+	printf("hashkey being retrieved from internal array for %s at idx: %d \n", key, hashedkey);
 	if (map->data[hashedkey] == NULL) {
+		pthread_mutex_unlock(&map->mutex);
 		return NULL;
 	}
 	struct keyvalentry* res = map->data[hashedkey];
@@ -85,8 +90,10 @@ struct keyvalentry* get_value(struct hashmap* map, char* key) {
 void delete_item(struct hashmap* map, char* key) {
 	int hashedkey = hashkey(key);
 	pthread_mutex_lock(&map->mutex);
-	struct keyvalentry* keyval = map->data[hashedkey] 
+	struct keyvalentry* keyval = map->data[hashedkey];
 	if (keyval != NULL) {
+		free(keyval->key);
+		free(keyval->value);
 		free(keyval);
 		map->data[hashedkey] = NULL;
 	}
@@ -95,16 +102,17 @@ void delete_item(struct hashmap* map, char* key) {
 
 // ------------------------ Background Thread Task that monitors TTL's ---------------
 struct ttl_item {
-	char key;
+	char* key;
 	time_t created_at;
 	int ms_to_expire;
-}
+};
 
+// Only a single monitor runs the garbage collection cycle so we don't need to maintain a mutex
 struct ttl_monitor {
-	struct ttl_item* items_arr[MAPSIZE];
-	int cursor;
-}
+	struct ttl_item** items_arr;
+};
 
+// TODO
 bool is_expired(time_t created_at, int ms_ttl) {
 	return false;
 }
@@ -115,7 +123,7 @@ int start_ttl_monitor(struct ttl_monitor* monitor, struct hashmap* map) {
 	while (true) {
 		for (int i = 0; i < MAPSIZE; i++) {
 			struct ttl_item* item = monitor->items_arr[i];
-			if (ttl_item != NULL && is_expired(ttl_item->created_at, ttl_item->ms_to_expire)) {
+			if (item != NULL && is_expired(item->created_at, item->ms_to_expire)) {
 			  delete_item(map, item->key);
 				// remove from our little cute internal array
 				free(monitor->items_arr[i]);
@@ -143,7 +151,7 @@ void add_ttl_item(struct ttl_monitor* monitor, char* key, int ms_to_expire) {
 	}
 
 	free(item);
-	// well fuck...... should throw an exception or teardown but i live on the edge
+	// well fuck...... we should throw an exception of some sort or have better error catching but i live on the edge
 }
 
 // ------------------------- Server utils ------------------------------------------------
@@ -205,9 +213,9 @@ void handle_set(int conn, char buf[MAX_BUFFER_SIZE], struct hashmap* map, bool h
 		move_buffer_till_next(&buf);
 		char val[next_val_size+2]; // 2 spots for \r\n
 		memcpy(val, buf, next_val_size+2);
-		move_buffer_till_next(&buf);
 		int expiration = NOEXPIRATION;
 		if (has_expiration) {
+			move_buffer_till_next(&buf);
 			move_buffer_till_next(&buf); // skip size of PX, we only accept PX
 			move_buffer_till_next(&buf); // skip reading PX since thats all we support anyway
 			buf++; // move past the $ for the expiration string size
@@ -217,13 +225,13 @@ void handle_set(int conn, char buf[MAX_BUFFER_SIZE], struct hashmap* map, bool h
 		}
 		printf("Saving %s, %s with expiration %d \n", key, val, expiration);
 		if (expiration != NOEXPIRATION) {
-			// TODO: ADD TO TTL_MONITOR
+			add_ttl_item(monitor, key, expiration);
 		}
 		char* msg = set_key_val(map, key, val, expiration)  == 0 ? ok_response : error_message;
 		write(conn, msg, strlen(msg));
 }
 
-void handle_get(int conn, char buf[MAX_BUFFER_SIZE], struct hashmap* map, struct ttl_monitor* monitor) {
+void handle_get(int conn, char buf[MAX_BUFFER_SIZE], struct hashmap* map) {
 	// move past the $
 	buf++;
 	int key_size = get_num(buf);
@@ -233,12 +241,21 @@ void handle_get(int conn, char buf[MAX_BUFFER_SIZE], struct hashmap* map, struct
 	memcpy(key, buf, key_size+2);
 	move_buffer_till_next(&buf);
 	struct keyvalentry* stored_data = get_value(map, key);
+
+	if (stored_data == NULL) {
+		// if it was already expired let the garbage colleciton cycle pick it up
+		printf("key not found in store \n");
+		write(conn, null_bulk_string, strlen(null_bulk_string));
+		return;
+	}
+
 	char* write_back_value = stored_data->value;
 	int expiration = stored_data->ms_to_expire;
 	time_t created_at = stored_data->created_at;
 
-	if (write_back_value == NULL || is_expired(created_at, expiration)) {
-		printf("key not found in store \n");
+	if (is_expired(created_at, expiration)) {
+		// if it was already expired let the garbage colleciton cycle pick it up
+		printf("expired key was found in store, this will be removed in garbage collection cycle \n");
 		write(conn, null_bulk_string, strlen(null_bulk_string));
 		return;
 	}
@@ -255,7 +272,7 @@ void handle_get(int conn, char buf[MAX_BUFFER_SIZE], struct hashmap* map, struct
 //-----------------Routing commands-----------------
 
 // Redis clients send arrays so this is where we handle them from
-void handle_cmd_array(int conn, char buf[MAX_BUFFER_SIZE], struct hashmap* map) {
+void handle_cmd_array(int conn, char buf[MAX_BUFFER_SIZE], struct hashmap* map, struct ttl_monitor* monitor) {
 	// move past the *
 	buf++;
 	int num_elements = get_num(buf);
@@ -270,7 +287,6 @@ void handle_cmd_array(int conn, char buf[MAX_BUFFER_SIZE], struct hashmap* map) 
 			// move past the $
 			buf++;
 			int str_size = get_num(buf);
-			printf("%d\n", str_size);
 			// move buffer till we reach start of where instruction is
 			move_buffer_till_next(&buf);
 			char instruction[str_size];
@@ -291,7 +307,7 @@ void handle_cmd_array(int conn, char buf[MAX_BUFFER_SIZE], struct hashmap* map) 
 					printf(" with expiration");
 				}
 				printf("!\n");
-				handle_set(conn, buf, map, has_expiration);
+				handle_set(conn, buf, map, has_expiration, monitor);
 				elems_read += has_expiration ? 5 : 3;
 			} else if (str_size == 3 && strncasecmp(instruction, "GET", 3) == 0) {
 				printf("A get command has been recieved! \n");
@@ -310,7 +326,7 @@ void handle_cmd_array(int conn, char buf[MAX_BUFFER_SIZE], struct hashmap* map) 
 	}
 }
 
-void route(int conn, char buf[MAX_BUFFER_SIZE], int bufsize, struct hashmap* map) {
+void route(int conn, char buf[MAX_BUFFER_SIZE], int bufsize, struct hashmap* map, struct ttl_monitor* monitor) {
 	char firstchar = buf[0];
 	switch (firstchar)
 	{
@@ -318,7 +334,7 @@ void route(int conn, char buf[MAX_BUFFER_SIZE], int bufsize, struct hashmap* map
 		write(conn, pong, strlen(pong));
 		break;
 	case ARRAYS:
-		handle_cmd_array(conn, buf, map);
+		handle_cmd_array(conn, buf, map, monitor);
 		break;
 	default:
 		write(conn, error_message, strlen(error_message));
@@ -327,13 +343,13 @@ void route(int conn, char buf[MAX_BUFFER_SIZE], int bufsize, struct hashmap* map
 }
 
 //---------- Event loop and Event loop helpers----------------
-void handle_connection(int conn, fd_set *__restrict current_sockets, struct hashmap* map)
+void handle_connection(int conn, fd_set *__restrict current_sockets, struct hashmap* map, struct ttl_monitor* monitor)
 {
 	char buf[1024] = {0};
 	if (recv(conn, buf, 1024, 0) > 0)
 	{
 		// if we can recieve data, then we should parse it and route it to the right handler
-		route(conn, buf, 1024, map);
+		route(conn, buf, 1024, map, monitor);
 		return;
 	}
 
@@ -341,7 +357,7 @@ void handle_connection(int conn, fd_set *__restrict current_sockets, struct hash
 }
 
 // IO Multiplexing (One thread listens to multiple sockets!)
-void run_multiplex(int server_socket, struct hashmap* map) {
+void run_multiplex(int server_socket, struct hashmap* map, struct ttl_monitor* monitor) {
 	// Initialize current file descriptor set and add server socket into our fdset
 	fd_set current_sockets, ready_sockets;
 	FD_ZERO(&current_sockets);
@@ -387,7 +403,7 @@ void run_multiplex(int server_socket, struct hashmap* map) {
 			}
 			else
 			{
-				handle_connection(i, &current_sockets, map);
+				handle_connection(i, &current_sockets, map, monitor);
 			}
 		}
 	}
@@ -444,12 +460,18 @@ int main()
 	
 	// create shared hashmap and pass it down to different routines
 	struct keyvalentry* data[MAPSIZE] = { NULL };
-	struct hashmap map = { .data = data };
+	struct hashmap map = { .mutex = PTHREAD_MUTEX_INITIALIZER, .data = data };
 	// ------------------------------------------------------------
+
+	// create our background monitor and kick it off in its own thread
+	struct ttl_item* items_arr[MAPSIZE] = { NULL };
+	struct ttl_monitor monitor = {.items_arr = items_arr};
+	
+	// --------------------------------------------------------------
 
 	printf("Redis Server listening on port %d \n", PORT);
 	
-	run_multiplex(server_socket, &map);
+	run_multiplex(server_socket, &map, &monitor);
 
 	close(server_socket);
 
