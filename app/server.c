@@ -56,7 +56,6 @@ int set_key_val(struct hashmap* map, char* key, char* val, int expiration) {
 	// hash offset from key
 	int hashedkey = hashkey(key) % MAPSIZE;
 	pthread_mutex_lock(&map->mutex);
-	printf("hashkey being inserted at internal array for %s at idx: %d \n", key, hashedkey);
 	if (map->data[hashedkey] != NULL) {
 		pthread_mutex_unlock(&map->mutex);
 		return 1;
@@ -77,7 +76,6 @@ int set_key_val(struct hashmap* map, char* key, char* val, int expiration) {
 struct keyvalentry* get_value(struct hashmap* map, char* key) {
 	int hashedkey = hashkey(key) % MAPSIZE;
 	pthread_mutex_lock(&map->mutex);
-	printf("hashkey being retrieved from internal array for %s at idx: %d \n", key, hashedkey);
 	if (map->data[hashedkey] == NULL) {
 		pthread_mutex_unlock(&map->mutex);
 		return NULL;
@@ -196,12 +194,10 @@ void handle_echo(int conn, char buf[MAX_BUFFER_SIZE]) {
 	// move past the $
 	buf++;
 	int next_str_size = get_num(buf);
-	printf("The associated string size is of size %d \n", next_str_size);
 	move_buffer_till_next(&buf);
 	char echo_str[next_str_size+3]; // 1 spot for + and the 2 spots for \r\n
 	echo_str[0] = '+';
 	memcpy(echo_str+1, buf, next_str_size+2);
-	printf("Writing back %s", echo_str);
 	write(conn, echo_str, next_str_size+3);
 	move_buffer_till_next(&buf);
 }
@@ -210,7 +206,6 @@ void handle_set(int conn, char buf[MAX_BUFFER_SIZE], struct hashmap* map, bool h
 		// move past the $
 		buf++;
 		int next_key_size = get_num(buf);
-		printf("The associated set key is of size %d \n", next_key_size);
 		move_buffer_till_next(&buf);
 		char key[next_key_size+2]; // 2 spots for \r\n
 		memcpy(key, buf, next_key_size+2);
@@ -218,7 +213,6 @@ void handle_set(int conn, char buf[MAX_BUFFER_SIZE], struct hashmap* map, bool h
 		// move past the $
 		buf++;
 		int next_val_size = get_num(buf);
-		printf("The associated set val is of size %d \n", next_val_size);
 		move_buffer_till_next(&buf);
 		char val[next_val_size+2]; // 2 spots for \r\n
 		memcpy(val, buf, next_val_size+2);
@@ -244,7 +238,6 @@ void handle_get(int conn, char buf[MAX_BUFFER_SIZE], struct hashmap* map) {
 	// move past the $
 	buf++;
 	int key_size = get_num(buf);
-	printf("The associated get key is of size %d \n", key_size);
 	move_buffer_till_next(&buf);
 	char key[key_size+2]; // 2 spots for \r\n
 	memcpy(key, buf, key_size+2);
@@ -261,7 +254,6 @@ void handle_get(int conn, char buf[MAX_BUFFER_SIZE], struct hashmap* map) {
 	char* write_back_value = stored_data->value;
 	int expiration = stored_data->ms_to_expire;
 	time_t created_at = stored_data->created_at;
-	printf("Expiration for item at %d \n", expiration);
 
 	if (expiration != NOEXPIRATION && is_expired(created_at, expiration)) {
 		// if it was already expired let the garbage colleciton cycle pick it up
@@ -271,11 +263,9 @@ void handle_get(int conn, char buf[MAX_BUFFER_SIZE], struct hashmap* map) {
 	}
 
 	int formatted_len = size_of_data(write_back_value, '\n') + 1;
-	printf("Write back %s with formatted size of %d bytes \n", write_back_value, formatted_len);
 	char formatted_write[formatted_len]; // +1 to insert the + sign
 	formatted_write[0] = '+';
 	memcpy(formatted_write+1, write_back_value, formatted_len - 1);
-	printf("Formatted write back %s", formatted_write);
 	write(conn, formatted_write, formatted_len);
 }
 
@@ -286,10 +276,8 @@ void handle_cmd_array(int conn, char buf[MAX_BUFFER_SIZE], struct hashmap* map, 
 	// move past the *
 	buf++;
 	int num_elements = get_num(buf);
-	printf("NUM ELEMENTS: %d \n", num_elements);
 	// move to where the instruction starts
 	move_buffer_till_next(&buf);
-	printf("BUFFER AFTER MOVE: %s", buf);
 	int elems_read = 0;
 
 	while (elems_read < num_elements) {
@@ -302,29 +290,22 @@ void handle_cmd_array(int conn, char buf[MAX_BUFFER_SIZE], struct hashmap* map, 
 			char instruction[str_size];
 			memcpy(instruction, buf, str_size);
 			move_buffer_till_next(&buf);
-			printf("INSTRUCTION: %s \n", instruction);
 
 			if (str_size == 4 && strncasecmp(instruction, "ECHO", 4) == 0) {
 				// then the next cmd will be the cmd to echo back!
-				printf("An echo command has been recieved! \n");
 				handle_echo(conn, buf);
 				elems_read+=2;
 			} else if (str_size == 3 && strncasecmp(instruction, "SET", 3) == 0) {
-				printf("A set command has been recieved");
 				bool has_expiration = false;
 				if (num_elements == 5) {
 					has_expiration = true;
-					printf(" with expiration");
 				}
-				printf("!\n");
 				handle_set(conn, buf, map, has_expiration, monitor);
 				elems_read += has_expiration ? 5 : 3;
 			} else if (str_size == 3 && strncasecmp(instruction, "GET", 3) == 0) {
-				printf("A get command has been recieved! \n");
 				handle_get(conn, buf, map);
 				elems_read += 2;
 			} else if (str_size == 4 && strncasecmp(instruction, "PING", 4) == 0) {
-				printf("A ping command has been recieved!");
 				write(conn, pong, strlen(pong));
 				elems_read += 1;
 			} else {
