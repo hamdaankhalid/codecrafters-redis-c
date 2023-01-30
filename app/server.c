@@ -29,6 +29,17 @@ char* ok_response = "+OK\r\n";
 char* key_not_found_response = "+(nil)\r\n";
 char* null_bulk_string = "$-1\r\n";
 
+// ------------ Common utils --------------------------------
+int size_of_data(char* data, char target) {
+	int i = 0;
+	while(data[i] != target) {
+		i++;
+	}
+	return i+1;
+}
+
+// ----------------------------------------------------------
+
 // ------------ Hashmap used to store key val ----------------
 struct keyvalentry
 {
@@ -61,13 +72,19 @@ int set_key_val(struct hashmap* map, char* key, char* val, int expiration) {
 		return 1;
 	}
 	struct keyvalentry* kv = (struct keyvalentry*)malloc(sizeof(struct keyvalentry));
-	kv->key = (char *)malloc(strlen(key));
-	kv->value = (char *)malloc(strlen(val));
+	
+	int key_size = size_of_data(key, '\n');
+	kv->key = (char *)malloc(key_size);
+	
+	int val_size = size_of_data(val, '\n');
+	kv->value = (char *)malloc(val_size);
+
 	kv->created_at = time(NULL);
 	kv->ms_to_expire = expiration;
 	
-	memcpy(kv->key, key, strlen(key));
-	memcpy(kv->value, val, strlen(val));
+	
+	memcpy(kv->key, key, key_size);
+	memcpy(kv->value, val, val_size);
 	map->data[hashedkey] = kv;
 	pthread_mutex_unlock(&map->mutex);
 	return 0;
@@ -141,8 +158,9 @@ void *start_ttl_monitor(void* args) {
 }
 
 void add_ttl_item(struct ttl_monitor* monitor, char* key, int ms_to_expire) {
-	char* key_on_heap = (char *)malloc(strlen(key));
-	memcpy(key_on_heap, key, strlen(key));
+	int key_size = size_of_data(key, '\n');
+	char* key_on_heap = (char *)malloc(key_size);
+	memcpy(key_on_heap, key, key_size);
 	struct ttl_item* item = (struct ttl_item*)malloc(sizeof(struct ttl_item));
 	item->ms_to_expire = ms_to_expire;
 	item->created_at = time(NULL);
@@ -162,14 +180,6 @@ void add_ttl_item(struct ttl_monitor* monitor, char* key, int ms_to_expire) {
 }
 
 // ------------------------- Server utils ------------------------------------------------
-
-int size_of_data(char* data, char target) {
-	int i = 0;
-	while(data[i] != target) {
-		i++;
-	}
-	return i+1;
-}
 
 int get_num(char* first){
 	int len = size_of_data(first, '\r');
