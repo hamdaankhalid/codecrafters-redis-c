@@ -49,12 +49,12 @@ int hashkey (char* word){
 	{
 			hash = 31*hash + word[i];
 	}
-	return hash % MAPSIZE;
+	return hash;
 }
 
 int set_key_val(struct hashmap* map, char* key, char* val, int expiration) {
 	// hash offset from key
-	int hashedkey = hashkey(key);
+	int hashedkey = hashkey(key) % MAPSIZE;
 	pthread_mutex_lock(&map->mutex);
 	printf("hashkey being inserted at internal array for %s at idx: %d \n", key, hashedkey);
 	if (map->data[hashedkey] != NULL) {
@@ -75,7 +75,7 @@ int set_key_val(struct hashmap* map, char* key, char* val, int expiration) {
 }
 
 struct keyvalentry* get_value(struct hashmap* map, char* key) {
-	int hashedkey = hashkey(key);
+	int hashedkey = hashkey(key) % MAPSIZE;
 	pthread_mutex_lock(&map->mutex);
 	printf("hashkey being retrieved from internal array for %s at idx: %d \n", key, hashedkey);
 	if (map->data[hashedkey] == NULL) {
@@ -88,7 +88,7 @@ struct keyvalentry* get_value(struct hashmap* map, char* key) {
 }
 
 void delete_item(struct hashmap* map, char* key) {
-	int hashedkey = hashkey(key);
+	int hashedkey = hashkey(key) % MAPSIZE;
 	pthread_mutex_lock(&map->mutex);
 	struct keyvalentry* keyval = map->data[hashedkey];
 	if (keyval != NULL) {
@@ -107,31 +107,38 @@ struct ttl_item {
 	int ms_to_expire;
 };
 
-// Only a single monitor runs the garbage collection cycle so we don't need to maintain a mutex
 struct ttl_monitor {
+	pthread_mutex_t mutex;
 	struct ttl_item** items_arr;
 };
 
-// TODO
+struct start_monitor_args {
+	struct ttl_monitor* monitor;
+	struct hashmap* map;
+};
+
 bool is_expired(time_t created_at, int ms_ttl) {
-	return false;
+	time_t now = time(NULL);
+	time_t	secs_since_created = now - created_at;	
+	return secs_since_created*1000.0 > (double) ms_ttl;
 }
 
-// Ideally we should be using a vector in here but for now lets settle with a fixed size
-// array since our hashmap is not dynamically sized either.......
-int start_ttl_monitor(struct ttl_monitor* monitor, struct hashmap* map) {
+// Procedure run in a single background thread
+void *start_ttl_monitor(void* args) {
+	struct start_monitor_args* argsCast = (struct start_monitor_args*) args;
 	while (true) {
+		pthread_mutex_lock(&argsCast->monitor->mutex);
 		for (int i = 0; i < MAPSIZE; i++) {
-			struct ttl_item* item = monitor->items_arr[i];
+			struct ttl_item* item = argsCast->monitor->items_arr[i];
 			if (item != NULL && is_expired(item->created_at, item->ms_to_expire)) {
-			  delete_item(map, item->key);
-				// remove from our little cute internal array
-				free(monitor->items_arr[i]);
-				monitor->items_arr[i]= NULL;
+			  delete_item(argsCast->map, item->key);
+				free(argsCast->monitor->items_arr[i]);
+				argsCast->monitor->items_arr[i]= NULL;
 			}
-			// sleep for a time period
-			usleep(GARBAGE_COLLECT_EXPIRED * 1000);
 		}
+		pthread_mutex_unlock(&argsCast->monitor->mutex);
+		// sleep for a time period
+		usleep(GARBAGE_COLLECT_EXPIRED * 1000);
 	}
 }
 
@@ -143,15 +150,17 @@ void add_ttl_item(struct ttl_monitor* monitor, char* key, int ms_to_expire) {
 	item->created_at = time(NULL);
 	item->key = key_on_heap;
 	
+	pthread_mutex_lock(&monitor->mutex);
 	for (int i = 0; i < MAPSIZE; i++) {
 		if (monitor->items_arr[i] == NULL) {
 			monitor->items_arr[i] = item;
+			pthread_mutex_unlock(&monitor->mutex);
 			return;
 		}
 	}
-
-	free(item);
 	// well fuck...... we should throw an exception of some sort or have better error catching but i live on the edge
+	free(item);
+	pthread_mutex_unlock(&monitor->mutex);
 }
 
 // ------------------------- Server utils ------------------------------------------------
@@ -252,8 +261,9 @@ void handle_get(int conn, char buf[MAX_BUFFER_SIZE], struct hashmap* map) {
 	char* write_back_value = stored_data->value;
 	int expiration = stored_data->ms_to_expire;
 	time_t created_at = stored_data->created_at;
+	printf("Expiration for item at %d \n", expiration);
 
-	if (is_expired(created_at, expiration)) {
+	if (expiration != NOEXPIRATION && is_expired(created_at, expiration)) {
 		// if it was already expired let the garbage colleciton cycle pick it up
 		printf("expired key was found in store, this will be removed in garbage collection cycle \n");
 		write(conn, null_bulk_string, strlen(null_bulk_string));
@@ -465,12 +475,16 @@ int main()
 
 	// create our background monitor and kick it off in its own thread
 	struct ttl_item* items_arr[MAPSIZE] = { NULL };
-	struct ttl_monitor monitor = {.items_arr = items_arr};
-	
+	struct ttl_monitor monitor = { .mutex = PTHREAD_MUTEX_INITIALIZER, .items_arr = items_arr};
+	struct start_monitor_args args = { .monitor = &monitor, .map = &map };
+
+	pthread_t th1;
+	pthread_create(&th1, NULL, start_ttl_monitor, (void*) &args);
 	// --------------------------------------------------------------
 
 	printf("Redis Server listening on port %d \n", PORT);
 	
+	// Blocking call
 	run_multiplex(server_socket, &map, &monitor);
 
 	close(server_socket);

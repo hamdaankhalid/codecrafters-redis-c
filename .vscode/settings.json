@@ -5,6 +5,7 @@
     "array": "c",
     "vector": "c",
     "string": "c",
-    "string_view": "c"
+    "string_view": "c",
+    "__mutex_base": "c"
   }
 }
