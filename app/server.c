@@ -38,9 +38,9 @@ int size_of_data(char* data, char target) {
 	return i+1;
 }
 
-// ----------------------------------------------------------
 
-// ------------ Hashmap used to store key val ----------------
+// ------------ Hashmap Implementaion ----------------
+
 struct keyvalentry
 {
 	char* key;
@@ -63,6 +63,7 @@ int hashkey (char* word){
 	return hash;
 }
 
+// Do not handle hash collision
 int set_key_val(struct hashmap* map, char* key, char* val, int expiration) {
 	// hash offset from key
 	int hashedkey = hashkey(key) % MAPSIZE;
@@ -115,7 +116,9 @@ void delete_item(struct hashmap* map, char* key) {
 	pthread_mutex_unlock(&map->mutex);
 }
 
+
 // ------------------------ Background Thread Task that monitors TTL's ---------------
+
 struct ttl_item {
 	char* key;
 	time_t created_at;
@@ -135,7 +138,7 @@ struct start_monitor_args {
 bool is_expired(time_t created_at, int ms_ttl) {
 	time_t now = time(NULL);
 	time_t	secs_since_created = now - created_at;	
-	return secs_since_created*1000.0 > (double) ms_ttl;
+	return secs_since_created*1000.0 >= (double) ms_ttl;
 }
 
 // Procedure run in a single background thread
@@ -179,6 +182,7 @@ void add_ttl_item(struct ttl_monitor* monitor, char* key, int ms_to_expire) {
 	pthread_mutex_unlock(&monitor->mutex);
 }
 
+
 // ------------------------- Server utils ------------------------------------------------
 
 int get_num(char* first){
@@ -197,6 +201,7 @@ void move_buffer_till_next(char** buf) {
 	}
 	*buf += i+1;
 }
+
 
 // -----------Command Handlers---------------------
 
@@ -255,7 +260,6 @@ void handle_get(int conn, char buf[MAX_BUFFER_SIZE], struct hashmap* map) {
 	struct keyvalentry* stored_data = get_value(map, key);
 
 	if (stored_data == NULL) {
-		// if it was already expired let the garbage colleciton cycle pick it up
 		printf("key not found in store \n");
 		write(conn, null_bulk_string, strlen(null_bulk_string));
 		return;
@@ -278,6 +282,7 @@ void handle_get(int conn, char buf[MAX_BUFFER_SIZE], struct hashmap* map) {
 	memcpy(formatted_write+1, write_back_value, formatted_len - 1);
 	write(conn, formatted_write, formatted_len);
 }
+
 
 //-----------------Routing commands-----------------
 
@@ -343,7 +348,9 @@ void route(int conn, char buf[MAX_BUFFER_SIZE], int bufsize, struct hashmap* map
 	}
 }
 
+
 //---------- Event loop and Event loop helpers----------------
+
 void handle_connection(int conn, fd_set *__restrict current_sockets, struct hashmap* map, struct ttl_monitor* monitor)
 {
 	char buf[1024] = {0};
@@ -357,7 +364,7 @@ void handle_connection(int conn, fd_set *__restrict current_sockets, struct hash
 	FD_CLR(conn, current_sockets);
 }
 
-// IO Multiplexing (One thread listens to multiple sockets!)
+// IO Multiplexing (One thread listens to multiple tcp server sockets!)
 void run_multiplex(int server_socket, struct hashmap* map, struct ttl_monitor* monitor) {
 	// Initialize current file descriptor set and add server socket into our fdset
 	fd_set current_sockets, ready_sockets;
@@ -448,8 +455,10 @@ int bind_and_listen(int port) {
 	return server_fd;
 }
 
-int main()
-{
+
+//--------------------- Assemble and Kickoff -------------------------
+
+int main() {
 	// Disable output buffering
 	setbuf(stdout, NULL);
 
@@ -462,16 +471,13 @@ int main()
 	// create shared hashmap and pass it down to different routines
 	struct keyvalentry* data[MAPSIZE] = { NULL };
 	struct hashmap map = { .mutex = PTHREAD_MUTEX_INITIALIZER, .data = data };
-	// ------------------------------------------------------------
 
 	// create our background monitor and kick it off in its own thread
 	struct ttl_item* items_arr[MAPSIZE] = { NULL };
 	struct ttl_monitor monitor = { .mutex = PTHREAD_MUTEX_INITIALIZER, .items_arr = items_arr};
 	struct start_monitor_args args = { .monitor = &monitor, .map = &map };
-
 	pthread_t th1;
 	pthread_create(&th1, NULL, start_ttl_monitor, (void*) &args);
-	// --------------------------------------------------------------
 
 	printf("Redis Server listening on port %d \n", PORT);
 	
